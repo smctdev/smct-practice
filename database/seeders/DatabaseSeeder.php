@@ -1,0 +1,93 @@
+<?php
+
+namespace Database\Seeders;
+
+use App\Enums\OrderStatus;
+use App\Models\Customer;
+use App\Models\Product;
+use App\Models\User;
+use Illuminate\Database\Console\Seeds\WithoutModelEvents;
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
+
+class DatabaseSeeder extends Seeder
+{
+    use WithoutModelEvents;
+
+    private const ORDER_COUNT = 3000;
+
+    private const VAT_RATE = 0.12;
+
+    public function run(): void
+    {
+        // Staff demo account. No phone on purpose — most staff accounts
+        // predate the phone field, which is exactly what the profile form
+        // has to cope with.
+        User::factory()->create([
+            'name' => 'Demo Staff',
+            'email' => 'demo@example.com',
+            'phone' => null,
+        ]);
+
+        $products = Product::factory()->count(40)->create();
+        $customers = Customer::factory()->count(600)->create();
+
+        $this->seedOrders($products, $customers);
+    }
+
+    /**
+     * Orders and their items are bulk-inserted in chunks so a full seed of
+     * ~3,000 orders stays under a few seconds on SQLite.
+     */
+    private function seedOrders($products, $customers): void
+    {
+        $now = now();
+        $orders = [];
+        $items = [];
+
+        foreach (range(1, self::ORDER_COUNT) as $orderId) {
+            $subtotal = 0;
+
+            foreach ($products->random(fake()->numberBetween(1, 4)) as $product) {
+                $quantity = fake()->numberBetween(1, 3);
+                $subtotal += $product->price_cents * $quantity;
+
+                $items[] = [
+                    'order_id' => $orderId,
+                    'product_id' => $product->id,
+                    'quantity' => $quantity,
+                    'unit_price_cents' => $product->price_cents,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
+
+            $vat = (int) round($subtotal * self::VAT_RATE);
+            $shipping = $subtotal >= 500000 ? 0 : 9900;
+
+            $orders[] = [
+                'id' => $orderId,
+                'customer_id' => $customers->random()->id,
+                'status' => fake()->randomElement([
+                    OrderStatus::Shipped, OrderStatus::Shipped, OrderStatus::Shipped,
+                    OrderStatus::Paid, OrderStatus::Pending, OrderStatus::Cancelled,
+                ])->value,
+                'subtotal_cents' => $subtotal,
+                'vat_cents' => $vat,
+                'shipping_cents' => $shipping,
+                'total_cents' => $subtotal + $vat + $shipping,
+                'placed_at' => fake()->dateTimeBetween('-18 months', 'now'),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+
+        foreach (array_chunk($orders, 500) as $chunk) {
+            DB::table('orders')->insert($chunk);
+        }
+
+        foreach (array_chunk($items, 500) as $chunk) {
+            DB::table('order_items')->insert($chunk);
+        }
+    }
+}
